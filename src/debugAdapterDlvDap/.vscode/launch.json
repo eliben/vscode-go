@@ -7,7 +7,7 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/../../out/src/debugAdapterDlvDap/goDebug.js",
 			"stopOnEntry": false,
-			"args": ["--server=4711"],
+			"args": ["--server=4722"],
 			"sourceMaps": true,
 			"outFiles": ["${workspaceFolder}/../../out/src/debugAdapterDlvDap"]
 		}
