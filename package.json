@@ -63,7 +63,7 @@
     "@types/fs-extra": "^8.1.0",
     "@types/glob": "^7.1.1",
     "@types/mocha": "^7.0.2",
-    "@types/node": "^13.11.1",
+    "@types/node": "^13.13.11",
     "@types/semver": "^7.1.0",
     "@types/sinon": "^9.0.0",
     "@types/vscode": "^1.41.0",
@@ -745,6 +745,15 @@
             }
           }
         }
+      },
+      {
+        "type": "godlvdap",
+        "label": "Go",
+        "program": "./out/src/debugAdapterDlvDap/goDebug.js",
+        "runtime": "node",
+        "languages": [
+          "go"
+        ]
       }
     ],
     "configuration": {
