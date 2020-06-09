@@ -497,6 +497,8 @@ export class Delve {
 				}
 				this.noDebug = false;
 
+				log('godlvdap');
+				log('launchargs:', launchArgs);
 				if (!existsSync(launchArgs.dlvToolPath)) {
 					log(
 						`Couldn't find dlv at the Go tools path, ${process.env['GOPATH']}${
@@ -785,7 +787,7 @@ export class GoDebugSession extends LoggingDebugSession {
 		response: DebugProtocol.InitializeResponse,
 		args: DebugProtocol.InitializeRequestArguments
 	): void {
-		log('InitializeRequest');
+		log('InitializeRequest -- godlvdap');
 		// This debug adapter implements the configurationDoneRequest.
 		response.body.supportsConfigurationDoneRequest = true;
 		response.body.supportsSetVariable = true;
