@@ -51,6 +51,7 @@ import {
 	cleanupTempDir, getBinPath, getCurrentGoPath, getExtensionCommands, getGoConfig,
 	getGoVersion, getToolsGopath, getWorkspaceFolderPath, handleDiagnosticErrors, isGoPathSet
 } from './util';
+import { GoDebugSession } from './debugAdapter/goDebug';
 
 export let buildDiagnosticCollection: vscode.DiagnosticCollection;
 export let lintDiagnosticCollection: vscode.DiagnosticCollection;
@@ -165,6 +166,12 @@ export function activate(ctx: vscode.ExtensionContext): void {
 	ctx.subscriptions.push(vscode.languages.registerCodeLensProvider(GO_MODE, referencesCodeLensProvider));
 	ctx.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('go', new GoDebugConfigurationProvider()));
 
+	let factory = new InlineDebugAdapterFactory();
+	ctx.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('go', factory));
+	if ('dispose' in factory) {
+		ctx.subscriptions.push(factory);
+	}
+	
 	buildDiagnosticCollection = vscode.languages.createDiagnosticCollection('go');
 	ctx.subscriptions.push(buildDiagnosticCollection);
 	lintDiagnosticCollection = vscode.languages.createDiagnosticCollection('go-lint');
@@ -622,5 +629,11 @@ function addOnChangeActiveTextEditorListeners(ctx: vscode.ExtensionContext) {
 function checkToolExists(tool: string) {
 	if (tool === getBinPath(tool)) {
 		promptForMissingTool(tool);
+	}
+}
+
+class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
+	createDebugAdapterDescriptor(_session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+		return new vscode.DebugAdapterInlineImplementation(new GoDebugSession(false));
 	}
 }
