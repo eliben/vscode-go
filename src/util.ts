@@ -12,6 +12,7 @@ import kill = require('tree-kill');
 import util = require('util');
 import vscode = require('vscode');
 import { NearestNeighborDict, Node } from './avlTree';
+import { extensionId } from './const';
 import { toolExecutionEnvironment } from './goEnv';
 import { buildDiagnosticCollection, lintDiagnosticCollection, vetDiagnosticCollection } from './goMain';
 import { getCurrentPackage } from './goModules';
@@ -19,11 +20,11 @@ import {
 	envPath,
 	fixDriveCasingInWindows,
 	getBinPathWithPreferredGopath,
+	getCurrentGoRoot,
 	getInferredGopath,
-	resolveHomeDir
+	resolveHomeDir,
 } from './goPath';
 import { outputChannel } from './goStatus';
-import { extensionId } from './telemetry';
 
 let userNameHash: number = 0;
 
@@ -307,7 +308,7 @@ export async function getGoVersion(): Promise<GoVersion | undefined> {
 	};
 
 	if (!goRuntimePath) {
-		warn(`unable to locate "go" binary in GOROOT (${process.env['GOROOT']}) or PATH (${envPath})`);
+		warn(`unable to locate "go" binary in GOROOT (${getCurrentGoRoot()}) or PATH (${envPath})`);
 		return;
 	}
 	if (cachedGoVersion) {
@@ -438,7 +439,7 @@ export function getBinPath(tool: string): string {
 	return getBinPathWithPreferredGopath(
 		tool,
 		tool === 'go' ? [] : [getToolsGopath(), getCurrentGoPath()],
-		resolvePath(alternateToolPath)
+		resolvePath(alternateToolPath),
 	);
 }
 

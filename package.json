@@ -1,9 +1,9 @@
 {
-  "name": "go-nightly",
-  "displayName": "Go Nightly",
-  "version": "0.0.0",
+  "name": "go",
+  "displayName": "Go",
+  "version": "0.15.0-dev",
   "publisher": "golang",
-  "description": "Rich Go language support for Visual Studio Code (Nightly)",
+  "description": "Rich Go language support for Visual Studio Code",
   "author": {
     "name": "Go Team at Google"
   },
@@ -74,7 +74,8 @@
     "sinon": "^9.0.2",
     "tslint": "^6.1.1",
     "typescript": "^3.8.3",
-    "vscode-test": "^1.3.0"
+    "vscode-test": "^1.3.0",
+    "yarn": "^1.22.4"
   },
   "engines": {
     "vscode": "^1.41.0"
@@ -345,6 +346,11 @@
         "command": "go.languageserver.restart",
         "title": "Go: Restart Language Server",
         "description": "Restart the running instance of the language server"
+      },
+      {
+        "command": "go.environment.choose",
+        "title": "Go: Choose Go Environment",
+        "description": "Choose a different Go version or binary for this project. (WIP)"
       }
     ],
     "breakpoints": [
