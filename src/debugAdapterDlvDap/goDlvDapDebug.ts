@@ -139,6 +139,8 @@ function logError(...args: any[]) {
 }
 
 export class GoDlvDapDebugSession extends LoggingDebugSession {
+	private logLevel: Logger.LogLevel = Logger.LogLevel.Error;
+
 	// we don't support multiple threads, so we can use a hardcoded ID for the default thread
 	private static THREAD_ID = 1;
 
@@ -160,7 +162,12 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 	 * We configure the default implementation of a debug adapter here.
 	 */
 	public constructor() {
-		super("mock-debug.txt");
+		super();
+
+		// Invoke logger.init here because we want logging to work in 'inline'
+		// DA mode. It's typically called in the start() method of our parent
+		// class, but this method isn't called in 'inline' mode.
+		logger.init(e => this.sendEvent(e));
 
 		// this debugger uses zero-based lines and columns
 		this.setDebuggerLinesStartAt1(false);
@@ -250,24 +257,25 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		log("initializeResponse");
 	}
 
-	/**
-	 * Called at the end of the configuration sequence.
-	 * Indicates that all breakpoints etc. have been sent to the DA and that the 'launch' can start.
-	 */
 	protected configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse, args: DebugProtocol.ConfigurationDoneArguments): void {
 		super.configurationDoneRequest(response, args);
-
 	}
 
 	protected async launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments) {
+		this.logLevel =
+			args.trace === 'verbose'
+				? Logger.LogLevel.Verbose
+				: args.trace === 'log'
+					? Logger.LogLevel.Log
+					: Logger.LogLevel.Error;
+		const logPath =
+			this.logLevel !== Logger.LogLevel.Error ? path.join(os.tmpdir(), 'vscode-go-debug.txt') : undefined;
+		logger.setup(this.logLevel, logPath);
 
-		// make sure to 'Stop' the buffered logging if 'trace' is not set
-		logger.setup(args.trace ? Logger.LogLevel.Verbose : Logger.LogLevel.Stop, false);
-
-		// start the program in the runtime
-		this._runtime.start(args.program, !!args.stopOnEntry);
+		log("launchRequest");
 
 		this.sendResponse(response);
+		log("launchResponse");
 	}
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
