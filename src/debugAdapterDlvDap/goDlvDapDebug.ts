@@ -147,20 +147,6 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 	// a Mock runtime (or debugger)
 	private _runtime: MockRuntime;
 
-	private _variableHandles = new Handles<string>();
-
-	private _cancelationTokens = new Map<number, boolean>();
-	private _isLongrunning = new Map<number, boolean>();
-
-	private _reportProgress = false;
-	private _progressId = 10000;
-	private _cancelledProgressId: string | undefined = undefined;
-	private _isProgressCancellable = true;
-
-	/**
-	 * Creates a new debug adapter that is used for one debug session.
-	 * We configure the default implementation of a debug adapter here.
-	 */
 	public constructor() {
 		super();
 
@@ -210,51 +196,13 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		});
 	}
 
-	/**
-	 * The 'initialize' request is the first request called by the frontend
-	 * to interrogate the features the debug adapter provides.
-	 */
 	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
-		log("initializeRequest");
-		if (args.supportsProgressReporting) {
-			this._reportProgress = true;
-		}
-
-		// build and return the capabilities of this debug adapter:
-		response.body = response.body || {};
-
-		// the adapter implements the configurationDoneRequest.
+		log('InitializeRequest');
+		// This debug adapter implements the configurationDoneRequest.
 		response.body.supportsConfigurationDoneRequest = true;
-
-		// make VS Code to use 'evaluate' when hovering over source
-		response.body.supportsEvaluateForHovers = true;
-
-		// make VS Code to show a 'step back' button
-		response.body.supportsStepBack = true;
-
-		// make VS Code to support data breakpoints
-		response.body.supportsDataBreakpoints = true;
-
-		// make VS Code to support completion in REPL
-		response.body.supportsCompletionsRequest = true;
-		response.body.completionTriggerCharacters = [ ".", "[" ];
-
-		// make VS Code to send cancelRequests
-		response.body.supportsCancelRequest = true;
-
-		// make VS Code send the breakpointLocations request
-		response.body.supportsBreakpointLocationsRequest = true;
-
-		// make VS Code provide "Step in Target" functionality
-		response.body.supportsStepInTargetsRequest = true;
-
+		response.body.supportsSetVariable = true;
 		this.sendResponse(response);
-
-		// since this debug adapter can accept configuration requests like 'setBreakpoint' at any time,
-		// we request them early by sending an 'initializeRequest' to the frontend.
-		// The frontend will end the configuration sequence by calling 'configurationDone' request.
-		this.sendEvent(new InitializedEvent());
-		log("initializeResponse");
+		log('InitializeResponse');
 	}
 
 	protected configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse, args: DebugProtocol.ConfigurationDoneArguments): void {
@@ -273,62 +221,19 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		logger.setup(this.logLevel, logPath);
 
 		log("launchRequest");
-
 		this.sendResponse(response);
 		log("launchResponse");
 	}
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
-
-		const path = <string>args.source.path;
-		const clientLines = args.lines || [];
-
-		// clear all breakpoints for this file
-		this._runtime.clearBreakpoints(path);
-
-		// set and verify breakpoint locations
-		const actualBreakpoints = clientLines.map(l => {
-			let { verified, line, id } = this._runtime.setBreakPoint(path, this.convertClientLineToDebugger(l));
-			const bp = <DebugProtocol.Breakpoint> new Breakpoint(verified, this.convertDebuggerLineToClient(line));
-			bp.id= id;
-			return bp;
-		});
-
-		// send back the actual breakpoint positions
-		response.body = {
-			breakpoints: actualBreakpoints
-		};
 		this.sendResponse(response);
 	}
 
 	protected breakpointLocationsRequest(response: DebugProtocol.BreakpointLocationsResponse, args: DebugProtocol.BreakpointLocationsArguments, request?: DebugProtocol.Request): void {
-
-		if (args.source.path) {
-			const bps = this._runtime.getBreakpoints(args.source.path, this.convertClientLineToDebugger(args.line));
-			response.body = {
-				breakpoints: bps.map(col => {
-					return {
-						line: args.line,
-						column: this.convertDebuggerColumnToClient(col)
-					}
-				})
-			};
-		} else {
-			response.body = {
-				breakpoints: []
-			};
-		}
 		this.sendResponse(response);
 	}
 
 	protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
-
-		// runtime supports no threads so just return a default thread.
-		response.body = {
-			threads: [
-				new Thread(GoDlvDapDebugSession.THREAD_ID, "thread 1")
-			]
-		};
 		this.sendResponse(response);
 	}
 
@@ -337,13 +242,6 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 	}
 
 	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
-
-		response.body = {
-			scopes: [
-				new Scope("Local", this._variableHandles.create("local"), false),
-				new Scope("Global", this._variableHandles.create("global"), true)
-			]
-		};
 		this.sendResponse(response);
 	}
 
@@ -372,20 +270,14 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 	}
 
 	protected stepInTargetsRequest(response: DebugProtocol.StepInTargetsResponse, args: DebugProtocol.StepInTargetsArguments) {
-		const targets = this._runtime.getStepInTargets(args.frameId);
-		response.body = {
-			targets: targets.map(t => { return { id: t.id, label: t.label }} )
-		};
 		this.sendResponse(response);
 	}
 
 	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments): void {
-		this._runtime.stepIn(args.targetId);
 		this.sendResponse(response);
 	}
 
 	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): void {
-		this._runtime.stepOut();
 		this.sendResponse(response);
 	}
 
@@ -393,88 +285,16 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		this.sendResponse(response);
 	}
 
-
 	protected dataBreakpointInfoRequest(response: DebugProtocol.DataBreakpointInfoResponse, args: DebugProtocol.DataBreakpointInfoArguments): void {
-
-		response.body = {
-            dataId: null,
-            description: "cannot break on data access",
-            accessTypes: undefined,
-            canPersist: false
-        };
-
-		if (args.variablesReference && args.name) {
-			const id = this._variableHandles.get(args.variablesReference);
-			if (id.startsWith("global_")) {
-				response.body.dataId = args.name;
-				response.body.description = args.name;
-				response.body.accessTypes = [ "read" ];
-				response.body.canPersist = true;
-			}
-		}
-
 		this.sendResponse(response);
 	}
 
 	protected setDataBreakpointsRequest(response: DebugProtocol.SetDataBreakpointsResponse, args: DebugProtocol.SetDataBreakpointsArguments): void {
-
-		// clear all data breakpoints
-		this._runtime.clearAllDataBreakpoints();
-
-		response.body = {
-			breakpoints: []
-		};
-
-		for (let dbp of args.breakpoints) {
-			// assume that id is the "address" to break on
-			const ok = this._runtime.setDataBreakpoint(dbp.dataId);
-			response.body.breakpoints.push({
-				verified: ok
-			});
-		}
-
 		this.sendResponse(response);
 	}
 
 	protected completionsRequest(response: DebugProtocol.CompletionsResponse, args: DebugProtocol.CompletionsArguments): void {
-
-		response.body = {
-			targets: [
-				{
-					label: "item 10",
-					sortText: "10"
-				},
-				{
-					label: "item 1",
-					sortText: "01"
-				},
-				{
-					label: "item 2",
-					sortText: "02"
-				},
-				{
-					label: "array[]",
-					selectionStart: 6,
-					sortText: "03"
-				},
-				{
-					label: "func(arg)",
-					selectionStart: 5,
-					selectionLength: 3,
-					sortText: "04"
-				}
-			]
-		};
 		this.sendResponse(response);
-	}
-
-	protected cancelRequest(response: DebugProtocol.CancelResponse, args: DebugProtocol.CancelArguments) {
-		if (args.requestId) {
-			this._cancelationTokens.set(args.requestId, true);
-		}
-		if (args.progressId) {
-			this._cancelledProgressId= args.progressId;
-		}
 	}
 }
 
