@@ -755,7 +755,7 @@
       {
         "type": "godlvdap",
         "label": "Go Dlv Dap",
-        "program": "./out/src/debugAdapterDlvDap/goDebug.js",
+        "program": "./out/src/debugAdapterDlvDap/goDlvDapDebugMain.js",
         "runtime": "node",
         "languages": [
           "go"

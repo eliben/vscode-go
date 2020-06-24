@@ -5,7 +5,7 @@
 			"name": "debug-debugger",
 			"type": "node",
 			"request": "launch",
-			"program": "${workspaceFolder}/../../out/src/debugAdapterDlvDap/goDebug.js",
+			"program": "${workspaceFolder}/../../out/src/debugAdapterDlvDap/goDlvDapDebugMain.js",
 			"stopOnEntry": false,
 			"args": ["--server=4722"],
 			"sourceMaps": true,
