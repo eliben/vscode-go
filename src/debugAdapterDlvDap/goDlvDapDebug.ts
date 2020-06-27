@@ -3,16 +3,15 @@
  * Licensed under the MIT License. See LICENSE in the project root for license information.
  *--------------------------------------------------------*/
 
+import net = require('net');
+import stream = require('stream');
+
 import { ChildProcess, execFile, execSync, spawn, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 
 import * as fs from 'fs';
-import { existsSync, lstatSync } from 'fs';
-import * as glob from 'glob';
-import { Client, RPCConnection } from 'json-rpc2';
 import * as os from 'os';
 import * as path from 'path';
-import kill = require('tree-kill');
 import * as util from 'util';
 import {
 	BreakpointEvent,
@@ -33,14 +32,6 @@ import {
 } from 'vscode-debugadapter';
 
 import { DebugProtocol } from 'vscode-debugprotocol';
-import {
-	envPath,
-	fixDriveCasingInWindows,
-	getBinPathWithPreferredGopath,
-	getCurrentGoWorkspaceFromGOPATH,
-	getInferredGopath,
-	parseEnvFile
-} from '../goPath';
 
 interface LoadConfig {
 	// FollowPointers requests pointers to be automatically dereferenced.
@@ -159,7 +150,6 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 
 	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
 		log('InitializeRequest');
-		// This debug adapter implements the configurationDoneRequest.
 		response.body.supportsConfigurationDoneRequest = true;
 		response.body.supportsSetVariable = true;
 		this.sendResponse(response);
@@ -171,6 +161,8 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 	}
 
 	protected async launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments) {
+		// Setup logger now that we have the 'trace' level passed in from
+		// LaunchRequestArguments.
 		this.logLevel =
 			args.trace === 'verbose'
 				? Logger.LogLevel.Verbose
@@ -178,7 +170,7 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 					? Logger.LogLevel.Log
 					: Logger.LogLevel.Error;
 		const logPath =
-			this.logLevel !== Logger.LogLevel.Error ? path.join(os.tmpdir(), 'vscode-go-debug.txt') : undefined;
+			this.logLevel !== Logger.LogLevel.Error ? path.join(os.tmpdir(), 'vscode-godlvdapdebug.txt') : undefined;
 		logger.setup(this.logLevel, logPath);
 
 		log("launchRequest");
@@ -255,9 +247,78 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 	}
 }
 
-export interface MockBreakpoint {
-	id: number;
-	line: number;
-	verified: boolean;
-}
+class DapClient extends EventEmitter {
+    private static readonly TWO_CRLF = '\r\n\r\n';
 
+    private outputStream: stream.Writable;
+
+    private rawData = Buffer.alloc(0);
+    private contentLength: number = -1;
+
+    constructor() {
+        super();
+    }
+
+    protected connect(readable: stream.Readable, writable: stream.Writable): void {
+        this.outputStream = writable;
+
+        readable.on('data', (data: Buffer) => {
+            this.handleData(data);
+        });
+    }
+
+    protected send(req: any): void {
+        const json = JSON.stringify(req);
+        this.outputStream.write(`Content-Length: ${Buffer.byteLength(json, 'utf8')}\r\n\r\n${json}`, 'utf8');
+    }
+
+    private handleData(data: Buffer): void {
+        this.rawData = Buffer.concat([this.rawData, data]);
+
+        while (true) {
+            if (this.contentLength >= 0) {
+                if (this.rawData.length >= this.contentLength) {
+                    const message = this.rawData.toString('utf8', 0, this.contentLength);
+                    this.rawData = this.rawData.slice(this.contentLength);
+                    this.contentLength = -1;
+                    if (message.length > 0) {
+                        this.dispatch(message);
+                    }
+                    continue;	// there may be more complete messages to process
+                }
+            } else {
+                const idx = this.rawData.indexOf(DapClient.TWO_CRLF);
+                if (idx !== -1) {
+                    const header = this.rawData.toString('utf8', 0, idx);
+                    const lines = header.split('\r\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        const pair = lines[i].split(/: +/);
+                        if (pair[0] === 'Content-Length') {
+                            this.contentLength = +pair[1];
+                        }
+                    }
+                    this.rawData = this.rawData.slice(idx + DapClient.TWO_CRLF.length);
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+
+    private dispatch(body: string): void {
+        const rawData = JSON.parse(body);
+
+        if (rawData.type == 'event') {
+            const event = <DebugProtocol.Event>rawData;
+            this.emit('event', event);
+        } else if (rawData.type == 'response') {
+            const response = <DebugProtocol.Response>rawData;
+            this.emit('response', response);
+        } else if (rawData.type == 'request') {
+            const request = <DebugProtocol.Request>rawData;
+            this.emit('request', request);
+        } else {
+            throw new Error(`unknown message ${JSON.stringify(rawData)}`);
+        }
+    }
+}
