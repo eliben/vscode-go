@@ -31,7 +31,10 @@ import {
 	Thread
 } from 'vscode-debugadapter';
 
+import {envPath} from '../goPath';
+
 import { DebugProtocol } from 'vscode-debugprotocol';
+import { CommentThreadCollapsibleState } from 'vscode';
 
 interface LoadConfig {
 	// FollowPointers requests pointers to be automatically dereferenced.
@@ -174,6 +177,16 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		logger.setup(this.logLevel, logPath);
 
 		log("launchRequest");
+
+		if (!args.port) {
+			args.port = 42042;
+		}
+		if (!args.host) {
+			args.host = '127.0.0.1';
+		}
+		
+		let dlvClient = new DelveClient(args);
+
 		this.sendResponse(response);
 		log("launchResponse");
 	}
@@ -321,4 +334,77 @@ class DapClient extends EventEmitter {
             throw new Error(`unknown message ${JSON.stringify(rawData)}`);
         }
     }
+}
+
+// TODO: document all events this emits:
+//
+//    'stdout' (str):     delve emitted str to stdout
+//    'stderr' (str):     delve emitted str to stderr
+//    'close' (rc):       delve exited with return code rc
+class DelveClient extends DapClient {
+	private debugProcess: ChildProcess;
+
+	constructor(launchArgs: LaunchRequestArguments) {
+		super();
+
+		const launchArgsEnv = launchArgs.env || {};
+		let env = Object.assign({}, process.env, launchArgsEnv);
+
+		// TODO: Spawn delve subprocess
+		// use launchArgs.dlvToolPath, unless env var is set to override?
+		// or better yet, just override it in launch.json in env{}?
+		let dlvPath = launchArgsEnv['dlvPath'];
+		if (!dlvPath) {
+			dlvPath = launchArgs.dlvToolPath;
+		}
+
+		if (!fs.existsSync(dlvPath)) {
+			log(
+				`Couldn't find dlv at the Go tools path, ${process.env['GOPATH']}${
+				env['GOPATH'] ? ', ' + env['GOPATH'] : ''
+				} or ${envPath}`
+			);
+			throw new Error(
+				`Cannot find Delve debugger. Install from https://github.com/go-delve/delve/ & ensure it is in your Go tools path, "GOPATH/bin" or "PATH".`
+			);
+		}
+
+		const dlvArgs = new Array<string>();
+		dlvArgs.push('dap');
+		dlvArgs.push(`--listen=${launchArgs.host}:${launchArgs.port}`);
+		if (launchArgs.showLog) {
+			dlvArgs.push('--log=' + launchArgs.showLog.toString());
+		}
+		if (launchArgs.logOutput) {
+			dlvArgs.push('--log-output=' + launchArgs.logOutput);
+		}
+
+		log(`Running: ${dlvPath} ${dlvArgs.join(' ')}`);
+
+		this.debugProcess = spawn(launchArgs.dlvToolPath, dlvArgs, {
+			cwd: path.dirname(launchArgs.program),
+			env
+		});
+
+		this.debugProcess.stderr.on('data', (chunk) => {
+			const str = chunk.toString();
+			this.emit('stderr', str);
+		});
+
+		this.debugProcess.stdout.on('data', (chunk) => {
+			const str = chunk.toString();
+			this.emit('stdout', str);
+		});
+
+		this.debugProcess.on('close', (rc) => {
+			if (rc) {
+				logError(`Process exiting with code: ${rc} signal: ${this.debugProcess.killed}`);
+			} else {
+				log(`Process exiting normally ${this.debugProcess.killed}`);
+			}
+			this.emit('close', rc);
+		});
+
+		// TODO: Create client socket and .connect it
+	}
 }
