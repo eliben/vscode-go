@@ -31,7 +31,7 @@ import {
 	Thread
 } from 'vscode-debugadapter';
 
-import {envPath} from '../goPath';
+import { envPath } from '../goPath';
 
 import { DebugProtocol } from 'vscode-debugprotocol';
 import { CommentThreadCollapsibleState } from 'vscode';
@@ -135,8 +135,7 @@ function logError(...args: any[]) {
 export class GoDlvDapDebugSession extends LoggingDebugSession {
 	private logLevel: Logger.LogLevel = Logger.LogLevel.Error;
 
-	// we don't support multiple threads, so we can use a hardcoded ID for the default thread
-	private static THREAD_ID = 1;
+	private dlvClient: DelveClient;
 
 	public constructor() {
 		super();
@@ -151,7 +150,7 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		this.setDebuggerColumnsStartAt1(false);
 	}
 
-	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
+	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments, request?: DebugProtocol.InitializeRequest): void {
 		log('InitializeRequest');
 		response.body.supportsConfigurationDoneRequest = true;
 		response.body.supportsSetVariable = true;
@@ -163,7 +162,7 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		super.configurationDoneRequest(response, args);
 	}
 
-	protected async launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments) {
+	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments, request: DebugProtocol.LaunchRequest) {
 		// Setup logger now that we have the 'trace' level passed in from
 		// LaunchRequestArguments.
 		this.logLevel =
@@ -185,18 +184,25 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 			args.host = '127.0.0.1';
 		}
 
-		let dlvClient = new DelveClient(args);
+		this.dlvClient = new DelveClient(args);
 
-		dlvClient.on('stdout', (str) => {
+		this.dlvClient.on('stdout', (str) => {
 			log("dlv stdout:", str);
 		});
 
-		dlvClient.on('stderr', (str) => {
+		this.dlvClient.on('stderr', (str) => {
 			log("dlv stderr:", str);
 		});
 
-		this.sendResponse(response);
-		log("launchResponse");
+		// TODO: hook this up -- wait for response and relay it back to vscode
+		// PROBLEM: delve is unhappy about loading our project for some reason,
+		// so figure this out
+		this.dlvClient.on('connected', () => {
+			this.dlvClient.send(request);
+		});
+
+		// this.sendResponse(response);
+		// log("launchResponse");
 	}
 
 	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
@@ -227,9 +233,9 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		this.sendResponse(response);
 	}
 
-	protected reverseContinueRequest(response: DebugProtocol.ReverseContinueResponse, args: DebugProtocol.ReverseContinueArguments) : void {
+	protected reverseContinueRequest(response: DebugProtocol.ReverseContinueResponse, args: DebugProtocol.ReverseContinueArguments): void {
 		this.sendResponse(response);
- 	}
+	}
 
 	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
 		this.sendResponse(response);
@@ -269,83 +275,84 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 }
 
 class DapClient extends EventEmitter {
-    private static readonly TWO_CRLF = '\r\n\r\n';
+	private static readonly TWO_CRLF = '\r\n\r\n';
 
-    private outputStream: stream.Writable;
+	private outputStream: stream.Writable;
 
-    private rawData = Buffer.alloc(0);
-    private contentLength: number = -1;
+	private rawData = Buffer.alloc(0);
+	private contentLength: number = -1;
 
-    constructor() {
-        super();
-    }
+	constructor() {
+		super();
+	}
 
-    protected connect(readable: stream.Readable, writable: stream.Writable): void {
-        this.outputStream = writable;
+	protected connect(readable: stream.Readable, writable: stream.Writable): void {
+		this.outputStream = writable;
 
-        readable.on('data', (data: Buffer) => {
-            this.handleData(data);
-        });
-    }
+		readable.on('data', (data: Buffer) => {
+			this.handleData(data);
+		});
+	}
 
-    protected send(req: any): void {
-        const json = JSON.stringify(req);
-        this.outputStream.write(`Content-Length: ${Buffer.byteLength(json, 'utf8')}\r\n\r\n${json}`, 'utf8');
-    }
+	public send(req: any): void {
+		const json = JSON.stringify(req);
+		this.outputStream.write(`Content-Length: ${Buffer.byteLength(json, 'utf8')}\r\n\r\n${json}`, 'utf8');
+	}
 
-    private handleData(data: Buffer): void {
-        this.rawData = Buffer.concat([this.rawData, data]);
+	private handleData(data: Buffer): void {
+		this.rawData = Buffer.concat([this.rawData, data]);
 
-        while (true) {
-            if (this.contentLength >= 0) {
-                if (this.rawData.length >= this.contentLength) {
-                    const message = this.rawData.toString('utf8', 0, this.contentLength);
-                    this.rawData = this.rawData.slice(this.contentLength);
-                    this.contentLength = -1;
-                    if (message.length > 0) {
-                        this.dispatch(message);
-                    }
-                    continue;	// there may be more complete messages to process
-                }
-            } else {
-                const idx = this.rawData.indexOf(DapClient.TWO_CRLF);
-                if (idx !== -1) {
-                    const header = this.rawData.toString('utf8', 0, idx);
-                    const lines = header.split('\r\n');
-                    for (let i = 0; i < lines.length; i++) {
-                        const pair = lines[i].split(/: +/);
-                        if (pair[0] === 'Content-Length') {
-                            this.contentLength = +pair[1];
-                        }
-                    }
-                    this.rawData = this.rawData.slice(idx + DapClient.TWO_CRLF.length);
-                    continue;
-                }
-            }
-            break;
-        }
-    }
+		while (true) {
+			if (this.contentLength >= 0) {
+				if (this.rawData.length >= this.contentLength) {
+					const message = this.rawData.toString('utf8', 0, this.contentLength);
+					this.rawData = this.rawData.slice(this.contentLength);
+					this.contentLength = -1;
+					if (message.length > 0) {
+						this.dispatch(message);
+					}
+					continue;	// there may be more complete messages to process
+				}
+			} else {
+				const idx = this.rawData.indexOf(DapClient.TWO_CRLF);
+				if (idx !== -1) {
+					const header = this.rawData.toString('utf8', 0, idx);
+					const lines = header.split('\r\n');
+					for (let i = 0; i < lines.length; i++) {
+						const pair = lines[i].split(/: +/);
+						if (pair[0] === 'Content-Length') {
+							this.contentLength = +pair[1];
+						}
+					}
+					this.rawData = this.rawData.slice(idx + DapClient.TWO_CRLF.length);
+					continue;
+				}
+			}
+			break;
+		}
+	}
 
-    private dispatch(body: string): void {
-        const rawData = JSON.parse(body);
+	private dispatch(body: string): void {
+		const rawData = JSON.parse(body);
 
-        if (rawData.type == 'event') {
-            const event = <DebugProtocol.Event>rawData;
-            this.emit('event', event);
-        } else if (rawData.type == 'response') {
-            const response = <DebugProtocol.Response>rawData;
-            this.emit('response', response);
-        } else if (rawData.type == 'request') {
-            const request = <DebugProtocol.Request>rawData;
-            this.emit('request', request);
-        } else {
-            throw new Error(`unknown message ${JSON.stringify(rawData)}`);
-        }
-    }
+		if (rawData.type == 'event') {
+			const event = <DebugProtocol.Event>rawData;
+			this.emit('event', event);
+		} else if (rawData.type == 'response') {
+			const response = <DebugProtocol.Response>rawData;
+			this.emit('response', response);
+		} else if (rawData.type == 'request') {
+			const request = <DebugProtocol.Request>rawData;
+			this.emit('request', request);
+		} else {
+			throw new Error(`unknown message ${JSON.stringify(rawData)}`);
+		}
+	}
 }
 
 // TODO: document all events this emits:
 //
+//    'connected':        client is connected to delve
 //    'stdout' (str):     delve emitted str to stdout
 //    'stderr' (str):     delve emitted str to stderr
 //    'close' (rc):       delve exited with return code rc
@@ -417,6 +424,19 @@ class DelveClient extends DapClient {
 			throw err;
 		});
 
-		// TODO: Create client socket and .connect it
+		// Give the Delve DAP server some time to start up before connecting.
+		setTimeout(() => {
+			let socket = net.createConnection(
+				launchArgs.port,
+				launchArgs.host,
+				() => {
+					this.connect(socket, socket);
+					this.emit('connected');
+				});
+
+			socket.on('error', (err) => {
+				throw err;
+			});
+		}, 100);
 	}
 }
