@@ -184,8 +184,16 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		if (!args.host) {
 			args.host = '127.0.0.1';
 		}
-		
+
 		let dlvClient = new DelveClient(args);
+
+		dlvClient.on('stdout', (str) => {
+			log("dlv stdout:", str);
+		});
+
+		dlvClient.on('stderr', (str) => {
+			log("dlv stderr:", str);
+		});
 
 		this.sendResponse(response);
 		log("launchResponse");
@@ -403,6 +411,10 @@ class DelveClient extends DapClient {
 				log(`Process exiting normally ${this.debugProcess.killed}`);
 			}
 			this.emit('close', rc);
+		});
+
+		this.debugProcess.on('error', (err) => {
+			throw err;
 		});
 
 		// TODO: Create client socket and .connect it
