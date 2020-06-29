@@ -511,7 +511,10 @@ export async function shouldUpdateLanguageServer(
 
 	// If the user's version does not contain a timestamp,
 	// default to a semver comparison of the two versions.
-	const usersVersionSemver = semver.coerce(usersVersion, { includePrerelease: true, loose: true });
+	const usersVersionSemver = semver.parse(usersVersion, {
+		includePrerelease: true,
+		loose: true,
+	});
 	return semver.lt(usersVersionSemver, latestVersion) ? latestVersion : null;
 }
 
@@ -666,7 +669,7 @@ async function goProxyRequest(tool: Tool, endpoint: string): Promise<any> {
 	}
 	// Try each URL set in the user's GOPROXY environment variable.
 	// If none is set, don't make the request.
-	const proxies = output.trim().split(',|');
+	const proxies = output.trim().split(/,|\|/);
 	for (const proxy of proxies) {
 		if (proxy === 'direct') {
 			continue;
@@ -678,6 +681,7 @@ async function goProxyRequest(tool: Tool, endpoint: string): Promise<any> {
 				throwResponseError: true
 			});
 		} catch (e) {
+			console.log(`Error sending request to ${proxy}: ${e}`);
 			return null;
 		}
 		return data;

@@ -18,7 +18,7 @@ import {
 import { GoDebugConfigurationProvider } from './goDebugConfiguration';
 import { extractFunction, extractVariable } from './goDoctor';
 import { toolExecutionEnvironment } from './goEnv';
-import { chooseGoEnvironment, initGoStatusBar } from './goEnvironmentStatus';
+import { chooseGoEnvironment } from './goEnvironmentStatus';
 import { runFillStruct } from './goFillStruct';
 import * as goGenerateTests from './goGenerateTests';
 import { goGetPackage } from './goGetPackage';
@@ -57,7 +57,7 @@ import {
 	getToolsGopath,
 	getWorkspaceFolderPath,
 	handleDiagnosticErrors,
-	isGoPathSet,
+	isGoPathSet
 } from './util';
 import { GoDlvDapDebugSession } from './debugAdapterDlvDap/goDlvDapDebug';
 
@@ -168,11 +168,6 @@ export function activate(ctx: vscode.ExtensionContext): void {
 			);
 		})
 	);
-	showHideStatus(vscode.window.activeTextEditor);
-
-	// show the go environment status bar item
-	initGoStatusBar();
-
 	const testCodeLensProvider = new GoRunTestCodeLensProvider();
 	const referencesCodeLensProvider = new GoReferencesCodeLensProvider();
 
@@ -417,8 +412,14 @@ export function activate(ctx: vscode.ExtensionContext): void {
 				return;
 			}
 			const updatedGoConfig = getGoConfig();
-			updateGoVarsFromConfig();
 
+			if (e.affectsConfiguration('go.goroot') ||
+				e.affectsConfiguration('go.alternateTools') ||
+				e.affectsConfiguration('go.gopath') ||
+				e.affectsConfiguration('go.toolsEnvVars') ||
+				e.affectsConfiguration('go.testEnvFile')) {
+					updateGoVarsFromConfig();
+			}
 			// If there was a change in "toolsGopath" setting, then clear cache for go tools
 			if (getToolsGopath() !== getToolsGopath(false)) {
 				clearCacheForTools();
@@ -564,8 +565,7 @@ export function activate(ctx: vscode.ExtensionContext): void {
 						updateWorkspaceState(lastCoverProfilePathKey, coverProfilePath);
 					}
 					applyCodeCoverageToAllEditors(
-						coverProfilePath,
-						path.dirname(vscode.window.activeTextEditor.document.fileName)
+						coverProfilePath
 					);
 				});
 		})

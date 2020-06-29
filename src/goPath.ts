@@ -31,17 +31,20 @@ export function getBinPathFromEnvVar(toolName: string, envVarValue: string, appe
 	return null;
 }
 
-export function getBinPathWithPreferredGopath(
+export function getBinPathWithPreferredGopathGoroot(
 	toolName: string,
 	preferredGopaths: string[],
-	alternateTool?: string
+	preferredGoroot?: string,
+	alternateTool?: string,
+	useCache = true,
 ) {
 	if (alternateTool && path.isAbsolute(alternateTool) && executableFileExists(alternateTool)) {
 		binPathCache[toolName] = alternateTool;
 		return alternateTool;
 	}
 
-	if (binPathCache[toolName]) {
+	// FIXIT: this cache needs to be invalidated when go.goroot or go.alternateTool is changed.
+	if (useCache && binPathCache[toolName]) {
 		return binPathCache[toolName];
 	}
 
@@ -64,7 +67,7 @@ export function getBinPathWithPreferredGopath(
 	}
 
 	// Check GOROOT (go, gofmt, godoc would be found here)
-	const pathFromGoRoot = getBinPathFromEnvVar(binname, getCurrentGoRoot(), true);
+	const pathFromGoRoot = getBinPathFromEnvVar(binname, preferredGoroot || getCurrentGoRoot(), true);
 	if (pathFromGoRoot) {
 		binPathCache[toolName] = pathFromGoRoot;
 		return pathFromGoRoot;
