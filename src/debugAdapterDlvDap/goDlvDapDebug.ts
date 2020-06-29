@@ -1,40 +1,23 @@
 /*---------------------------------------------------------
- * Copyright (C) Microsoft Corporation. All rights reserved.
+ * Copyright 2020 The Go Authors. All rights reserved.
  * Licensed under the MIT License. See LICENSE in the project root for license information.
  *--------------------------------------------------------*/
-
 import net = require('net');
-import stream = require('stream');
 
-import { ChildProcess, execFile, execSync, spawn, spawnSync } from 'child_process';
-import { EventEmitter } from 'events';
+import { ChildProcess, spawn } from 'child_process';
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import * as util from 'util';
 import {
-	BreakpointEvent,
-	Breakpoint,
-	DebugSession,
-	Handles,
-	InitializedEvent,
 	logger,
 	Logger,
-	LoggingDebugSession,
-	OutputEvent,
-	Scope,
-	Source,
-	StackFrame,
-	StoppedEvent,
-	TerminatedEvent,
-	Thread
+	LoggingDebugSession
 } from 'vscode-debugadapter';
+import { DebugProtocol } from 'vscode-debugprotocol';
 
 import { envPath } from '../goPath';
-
-import { DebugProtocol } from 'vscode-debugprotocol';
-import { CommentThreadCollapsibleState } from 'vscode';
+import { DapClient } from './dapClient';
 
 interface LoadConfig {
 	// FollowPointers requests pointers to be automatically dereferenced.
@@ -48,9 +31,6 @@ interface LoadConfig {
 	// MaxStructFields is the maximum number of fields read from a struct, -1 will read all fields.
 	maxStructFields: number;
 }
-
-const fsAccess = util.promisify(fs.access);
-const fsUnlink = util.promisify(fs.unlink);
 
 // This interface should always match the schema found in `package.json`.
 interface LaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
@@ -150,19 +130,19 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		this.setDebuggerColumnsStartAt1(false);
 	}
 
-	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments, request?: DebugProtocol.InitializeRequest): void {
+	protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments, request?: DebugProtocol.Request): void {
 		log('InitializeRequest');
 		response.body.supportsConfigurationDoneRequest = true;
 		response.body.supportsSetVariable = true;
+
+		// We respond to InitializeRequest here, because Delve hasn't been
+		// launched yet. Delve will start responding to DAP requests after
+		// LaunchRequest is received, which tell us how to start it.
 		this.sendResponse(response);
 		log('InitializeResponse');
 	}
 
-	protected configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse, args: DebugProtocol.ConfigurationDoneArguments): void {
-		super.configurationDoneRequest(response, args);
-	}
-
-	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments, request: DebugProtocol.LaunchRequest) {
+	protected launchRequest(response: DebugProtocol.LaunchResponse, args: LaunchRequestArguments, request: DebugProtocol.Request) {
 		// Setup logger now that we have the 'trace' level passed in from
 		// LaunchRequestArguments.
 		this.logLevel =
@@ -194,168 +174,174 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 			log("dlv stderr:", str);
 		});
 
-		// TODO: hook this up -- wait for response and relay it back to vscode
-		// PROBLEM: delve is unhappy about loading our project for some reason,
-		// so figure this out
 		this.dlvClient.on('connected', () => {
 			this.dlvClient.send(request);
 		});
 
-		// this.sendResponse(response);
-		// log("launchResponse");
-	}
+		// Relay events and responses back to vscode. In the future we will
+		// add middleware here to intercept specific kinds of responses/events
+		// for special handling.
+		this.dlvClient.on('event', (event) => {
+			this.sendEvent(event);
+		});
 
-	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected breakpointLocationsRequest(response: DebugProtocol.BreakpointLocationsResponse, args: DebugProtocol.BreakpointLocationsArguments, request?: DebugProtocol.Request): void {
-		this.sendResponse(response);
-	}
-
-	protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
-		this.sendResponse(response);
-	}
-
-	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments, request?: DebugProtocol.Request) {
-		this.sendResponse(response);
-	}
-
-	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected reverseContinueRequest(response: DebugProtocol.ReverseContinueResponse, args: DebugProtocol.ReverseContinueArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected stepBackRequest(response: DebugProtocol.StepBackResponse, args: DebugProtocol.StepBackArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected stepInTargetsRequest(response: DebugProtocol.StepInTargetsResponse, args: DebugProtocol.StepInTargetsArguments) {
-		this.sendResponse(response);
-	}
-
-	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected dataBreakpointInfoRequest(response: DebugProtocol.DataBreakpointInfoResponse, args: DebugProtocol.DataBreakpointInfoArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected setDataBreakpointsRequest(response: DebugProtocol.SetDataBreakpointsResponse, args: DebugProtocol.SetDataBreakpointsArguments): void {
-		this.sendResponse(response);
-	}
-
-	protected completionsRequest(response: DebugProtocol.CompletionsResponse, args: DebugProtocol.CompletionsArguments): void {
-		this.sendResponse(response);
-	}
-}
-
-class DapClient extends EventEmitter {
-	private static readonly TWO_CRLF = '\r\n\r\n';
-
-	private outputStream: stream.Writable;
-
-	private rawData = Buffer.alloc(0);
-	private contentLength: number = -1;
-
-	constructor() {
-		super();
-	}
-
-	protected connect(readable: stream.Readable, writable: stream.Writable): void {
-		this.outputStream = writable;
-
-		readable.on('data', (data: Buffer) => {
-			this.handleData(data);
+		this.dlvClient.on('response', (response) => {
+			this.sendResponse(response);
 		});
 	}
 
-	public send(req: any): void {
-		const json = JSON.stringify(req);
-		this.outputStream.write(`Content-Length: ${Buffer.byteLength(json, 'utf8')}\r\n\r\n${json}`, 'utf8');
+	protected terminateRequest(response: DebugProtocol.TerminateResponse, args: DebugProtocol.TerminateArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
 	}
 
-	private handleData(data: Buffer): void {
-		this.rawData = Buffer.concat([this.rawData, data]);
-
-		while (true) {
-			if (this.contentLength >= 0) {
-				if (this.rawData.length >= this.contentLength) {
-					const message = this.rawData.toString('utf8', 0, this.contentLength);
-					this.rawData = this.rawData.slice(this.contentLength);
-					this.contentLength = -1;
-					if (message.length > 0) {
-						this.dispatch(message);
-					}
-					continue;	// there may be more complete messages to process
-				}
-			} else {
-				const idx = this.rawData.indexOf(DapClient.TWO_CRLF);
-				if (idx !== -1) {
-					const header = this.rawData.toString('utf8', 0, idx);
-					const lines = header.split('\r\n');
-					for (let i = 0; i < lines.length; i++) {
-						const pair = lines[i].split(/: +/);
-						if (pair[0] === 'Content-Length') {
-							this.contentLength = +pair[1];
-						}
-					}
-					this.rawData = this.rawData.slice(idx + DapClient.TWO_CRLF.length);
-					continue;
-				}
-			}
-			break;
-		}
+	protected restartRequest(response: DebugProtocol.RestartResponse, args: DebugProtocol.RestartArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
 	}
 
-	private dispatch(body: string): void {
-		const rawData = JSON.parse(body);
+	protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse, args: DebugProtocol.SetBreakpointsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
 
-		if (rawData.type == 'event') {
-			const event = <DebugProtocol.Event>rawData;
-			this.emit('event', event);
-		} else if (rawData.type == 'response') {
-			const response = <DebugProtocol.Response>rawData;
-			this.emit('response', response);
-		} else if (rawData.type == 'request') {
-			const request = <DebugProtocol.Request>rawData;
-			this.emit('request', request);
-		} else {
-			throw new Error(`unknown message ${JSON.stringify(rawData)}`);
-		}
+	protected setFunctionBreakPointsRequest(response: DebugProtocol.SetFunctionBreakpointsResponse, args: DebugProtocol.SetFunctionBreakpointsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected setExceptionBreakPointsRequest(response: DebugProtocol.SetExceptionBreakpointsResponse, args: DebugProtocol.SetExceptionBreakpointsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse, args: DebugProtocol.ConfigurationDoneArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected stepBackRequest(response: DebugProtocol.StepBackResponse, args: DebugProtocol.StepBackArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected reverseContinueRequest(response: DebugProtocol.ReverseContinueResponse, args: DebugProtocol.ReverseContinueArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected restartFrameRequest(response: DebugProtocol.RestartFrameResponse, args: DebugProtocol.RestartFrameArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected gotoRequest(response: DebugProtocol.GotoResponse, args: DebugProtocol.GotoArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected pauseRequest(response: DebugProtocol.PauseResponse, args: DebugProtocol.PauseArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected sourceRequest(response: DebugProtocol.SourceResponse, args: DebugProtocol.SourceArguments, request?: DebugProtocol.Request) : void {
+		this.dlvClient.send(request);
+	}
+
+	protected threadsRequest(response: DebugProtocol.ThreadsResponse, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected terminateThreadsRequest(response: DebugProtocol.TerminateThreadsResponse, args: DebugProtocol.TerminateThreadsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected setExpressionRequest(response: DebugProtocol.SetExpressionResponse, args: DebugProtocol.SetExpressionArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected stepInTargetsRequest(response: DebugProtocol.StepInTargetsResponse, args: DebugProtocol.StepInTargetsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected gotoTargetsRequest(response: DebugProtocol.GotoTargetsResponse, args: DebugProtocol.GotoTargetsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected completionsRequest(response: DebugProtocol.CompletionsResponse, args: DebugProtocol.CompletionsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected exceptionInfoRequest(response: DebugProtocol.ExceptionInfoResponse, args: DebugProtocol.ExceptionInfoArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected loadedSourcesRequest(response: DebugProtocol.LoadedSourcesResponse, args: DebugProtocol.LoadedSourcesArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected dataBreakpointInfoRequest(response: DebugProtocol.DataBreakpointInfoResponse, args: DebugProtocol.DataBreakpointInfoArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected setDataBreakpointsRequest(response: DebugProtocol.SetDataBreakpointsResponse, args: DebugProtocol.SetDataBreakpointsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected readMemoryRequest(response: DebugProtocol.ReadMemoryResponse, args: DebugProtocol.ReadMemoryArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected disassembleRequest(response: DebugProtocol.DisassembleResponse, args: DebugProtocol.DisassembleArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected cancelRequest(response: DebugProtocol.CancelResponse, args: DebugProtocol.CancelArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected breakpointLocationsRequest(response: DebugProtocol.BreakpointLocationsResponse, args: DebugProtocol.BreakpointLocationsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
+	}
+
+	protected setInstructionBreakpointsRequest(response: DebugProtocol.SetInstructionBreakpointsResponse, args: DebugProtocol.SetInstructionBreakpointsArguments, request?: DebugProtocol.Request): void {
+		this.dlvClient.send(request);
 	}
 }
 
-// TODO: document all events this emits:
-//
-//    'connected':        client is connected to delve
-//    'stdout' (str):     delve emitted str to stdout
-//    'stderr' (str):     delve emitted str to stderr
-//    'close' (rc):       delve exited with return code rc
+//    'connected':            delve is connected to delve
+//    'request (request)':    delve sent request
+//    'response (response)':  delve sent response
+//    'event (event)':        delve sent event
+//    'stdout' (str):         delve emitted str to stdout
+//    'stderr' (str):         delve emitted str to stderr
+//    'close' (rc):           delve exited with return code rc
 class DelveClient extends DapClient {
 	private debugProcess: ChildProcess;
 
@@ -365,9 +351,8 @@ class DelveClient extends DapClient {
 		const launchArgsEnv = launchArgs.env || {};
 		let env = Object.assign({}, process.env, launchArgsEnv);
 
-		// TODO: Spawn delve subprocess
-		// use launchArgs.dlvToolPath, unless env var is set to override?
-		// or better yet, just override it in launch.json in env{}?
+		// Let users override direct path to delve by setting it in the env
+		// map in launch.json; if unspecified, fall back to dlvToolPath.
 		let dlvPath = launchArgsEnv['dlvPath'];
 		if (!dlvPath) {
 			dlvPath = launchArgs.dlvToolPath;
@@ -396,7 +381,7 @@ class DelveClient extends DapClient {
 
 		log(`Running: ${dlvPath} ${dlvArgs.join(' ')}`);
 
-		this.debugProcess = spawn(launchArgs.dlvToolPath, dlvArgs, {
+		this.debugProcess = spawn(dlvPath, dlvArgs, {
 			cwd: path.dirname(launchArgs.program),
 			env
 		});
