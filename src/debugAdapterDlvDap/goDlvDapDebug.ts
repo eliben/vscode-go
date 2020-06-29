@@ -3,16 +3,16 @@
  * Licensed under the MIT License. See LICENSE in the project root for license information.
  *--------------------------------------------------------*/
 import net = require('net');
-
 import { ChildProcess, spawn } from 'child_process';
-
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
 import {
 	logger,
 	Logger,
-	LoggingDebugSession
+	LoggingDebugSession,
+	TerminatedEvent
 } from 'vscode-debugadapter';
 import { DebugProtocol } from 'vscode-debugprotocol';
 
@@ -112,7 +112,21 @@ function logError(...args: any[]) {
 	logger.error(logArgsToString(args));
 }
 
+// GoDlvDapDebugSession implements a DAP debug adapter to talk to the editor.
+//
+// This adapter serves as a DAP proxy between the editor and the DAP server
+// inside Delve. It relies on functionality inherited from DebugSession to
+// implement the server side interfacing the editor, and on DapClient to
+// implement the client side interfacing Delve:
+//
+//      Editor                GoDlvDapDebugSession                 Delve
+//  +------------+        +--------------+-----------+         +------------+
+//  | DAP Client | <====> | DebugSession | DapClient |  <====> | DAP Server |
+//  +------------+        +--------------+-----------+         +------------+
 export class GoDlvDapDebugSession extends LoggingDebugSession {
+	private readonly DEFAULT_DELVE_HOST = '127.0.0.1';
+	private readonly DEFAULT_DELVE_PORT = 42042;
+
 	private logLevel: Logger.LogLevel = Logger.LogLevel.Error;
 
 	private dlvClient: DelveClient;
@@ -138,6 +152,12 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		// We respond to InitializeRequest here, because Delve hasn't been
 		// launched yet. Delve will start responding to DAP requests after
 		// LaunchRequest is received, which tell us how to start it.
+		
+		// TODO: we could send an InitializeRequest to Delve when
+		// it launches, wait for its response and sanity check the capabilities
+		// it reports. Once DAP support in Delve is complete, this can be part
+		// of making sure that the "dlv" binary we find is sufficiently
+		// up-to-date to talk DAP with us.
 		this.sendResponse(response);
 		log('InitializeResponse');
 	}
@@ -158,11 +178,14 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		log("launchRequest");
 
 		if (!args.port) {
-			args.port = 42042;
+			args.port = this.DEFAULT_DELVE_PORT;
 		}
 		if (!args.host) {
-			args.host = '127.0.0.1';
+			args.host = this.DEFAULT_DELVE_HOST;
 		}
+
+		// TODO: if this is a noDebug launch request, don't launch Delve;
+		// instead, run the program directly.
 
 		this.dlvClient = new DelveClient(args);
 
@@ -176,6 +199,17 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 
 		this.dlvClient.on('connected', () => {
 			this.dlvClient.send(request);
+		});
+
+		this.dlvClient.on('close', (rc) => {
+			if (rc !== 0) {
+				this.sendErrorResponse(
+					response,
+					3000,
+					'Failed to continue: Check the debug console for details.');
+			}
+			log('Sending TerminatedEvent as delve is closed');
+			this.sendEvent(new TerminatedEvent());
 		});
 
 		// Relay events and responses back to vscode. In the future we will
@@ -214,43 +248,43 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 		this.dlvClient.send(request);
 	}
 
-	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments, request?: DebugProtocol.Request) : void {
+	protected continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments, request?: DebugProtocol.Request) : void {
+	protected nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments, request?: DebugProtocol.Request) : void {
+	protected stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments, request?: DebugProtocol.Request) : void {
+	protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected stepBackRequest(response: DebugProtocol.StepBackResponse, args: DebugProtocol.StepBackArguments, request?: DebugProtocol.Request) : void {
+	protected stepBackRequest(response: DebugProtocol.StepBackResponse, args: DebugProtocol.StepBackArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected reverseContinueRequest(response: DebugProtocol.ReverseContinueResponse, args: DebugProtocol.ReverseContinueArguments, request?: DebugProtocol.Request) : void {
+	protected reverseContinueRequest(response: DebugProtocol.ReverseContinueResponse, args: DebugProtocol.ReverseContinueArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected restartFrameRequest(response: DebugProtocol.RestartFrameResponse, args: DebugProtocol.RestartFrameArguments, request?: DebugProtocol.Request) : void {
+	protected restartFrameRequest(response: DebugProtocol.RestartFrameResponse, args: DebugProtocol.RestartFrameArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected gotoRequest(response: DebugProtocol.GotoResponse, args: DebugProtocol.GotoArguments, request?: DebugProtocol.Request) : void {
+	protected gotoRequest(response: DebugProtocol.GotoResponse, args: DebugProtocol.GotoArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected pauseRequest(response: DebugProtocol.PauseResponse, args: DebugProtocol.PauseArguments, request?: DebugProtocol.Request) : void {
+	protected pauseRequest(response: DebugProtocol.PauseResponse, args: DebugProtocol.PauseArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
-	protected sourceRequest(response: DebugProtocol.SourceResponse, args: DebugProtocol.SourceArguments, request?: DebugProtocol.Request) : void {
+	protected sourceRequest(response: DebugProtocol.SourceResponse, args: DebugProtocol.SourceArguments, request?: DebugProtocol.Request): void {
 		this.dlvClient.send(request);
 	}
 
@@ -335,6 +369,10 @@ export class GoDlvDapDebugSession extends LoggingDebugSession {
 	}
 }
 
+// DelveClient provides a DAP client to talk to a DAP server in Delve.
+//
+// After creation, it emits the following events:
+//
 //    'connected':            delve is connected to delve
 //    'request (request)':    delve sent request
 //    'response (response)':  delve sent response
@@ -410,6 +448,8 @@ class DelveClient extends DapClient {
 		});
 
 		// Give the Delve DAP server some time to start up before connecting.
+		// TODO: if this turns out to be flaky, we could wait for Delve to emit
+		// its first text to stdout before doing this.
 		setTimeout(() => {
 			let socket = net.createConnection(
 				launchArgs.port,

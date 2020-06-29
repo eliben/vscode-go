@@ -176,8 +176,8 @@ export function activate(ctx: vscode.ExtensionContext): void {
 	ctx.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('go', new GoDebugConfigurationProvider()));
 	ctx.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('godlvdap', new GoDebugConfigurationProvider()));
 
-	// Use an InlineDebugAdapterFactory to create a new debug adapter for the 'godlvdap' command in inline mode, without
-	// launching a subprocess.
+	// Use an InlineDebugAdapterFactory to create a new debug adapter for
+	// the 'godlvdap' command in inline mode, without launching a subprocess.
 	let factory = new InlineDebugAdapterFactory();
 	ctx.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('godlvdap', factory));
 	if ('dispose' in factory) {
@@ -655,7 +655,6 @@ function checkToolExists(tool: string) {
 		promptForMissingTool(tool);
 	}
 }
-
 
 class InlineDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
 	createDebugAdapterDescriptor(_session: vscode.DebugSession): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
